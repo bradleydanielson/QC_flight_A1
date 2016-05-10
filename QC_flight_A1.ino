@@ -1,10 +1,10 @@
 /* FLIGHT CODE FOR QUADDY MCQUADCOPTER (AKA H.M.S. DAN SISSON) */
-
+// by Brad Danielson
 // ***************************************************************
 /* 
  *  THINGS TO RESEARCH:
  *  
- * 
+ * Magnetic Declination Required?
  * 
  * 
  * 
@@ -20,15 +20,7 @@
 #include <math.h>
 #include <FlightControl.h>
 
-/* General Definitions */
-#define TRUE 1 
-#define FALSE 0
-#define CHARGE 0
-#define TAKEOFF 1
-#define HOVER 2
-#define TRANSLATE 3
-#define LAND 4
-/*
+/* General Definitions 
    * COMMENT OUT:
    * Serial  > if using Bluetooth device
    * Serial2 > if hardwired via USB using COM port
@@ -57,46 +49,8 @@
 #define deg2rad 0.0174533
 #define magneticDec 14.79 // Degrees
 
-/* Control Parameters Default Definitions */
-// PITCH
-#define KPP 0.2
-#define KDP 0.01
-#define KIP 0.001
-//ROLL
-#define KPR 0.2
-#define KDR 0.01
-#define KIR 0.001
-//YAW
-#define KPY 0.1
-#define KDY 0.001
-#define KIY 0.001
-//EAST
-#define KPE 1.0
-#define KDE 0.01
-#define KIE 0.001
-//NORTH
-#define KPN 1.0
-#define KDN 0.01
-#define KIN 0.001
-//UP
-#define KPZ 1.0
-#define KDZ 0.001
-#define KIZ 0.01
-/* End K params*/
 
-/* These Definitions Pertain to Flight Plan */
-#define NumberOfModes 5
-#define HOVERALTITUDE 2  // METERS
-#define EASTTARGET 9   // METERS
-#define NORTHTARGET 10  // METERS
-#define LandingIndex 3 
-/* End Flight Plan Definitions */ /*******************************************/
-
-/* GLOBAL VARIABLES */
-double KiP = KIP, KiR = KIR, KpP = KPP, KpR = KPR, KdP = KDP, KdR = KDR, KiY = KIY, KdY = KDY, KpY = KPY;
-double KpN = KPN, KiN = KIN, KdN = KDN, KpE = KPE, KiE = KIE, KdE = KDE;
-double KpZ = KPZ, KiZ = KIZ, KdZ = KDZ ;
-double OutputE, OutputN, OutputZ;
+double OutputE, OutputN, OutputZ ;
 double InputE_cons = 0.0, InputN_cons = 0.0, InputZ; /* Zero (constants) due to rotateVector() algorithm */
 double InputP = 0.0, OutputP ;
 double InputR = 0.0, OutputR ;
@@ -110,28 +64,7 @@ double SpeedControl = 1.0, ZControl = 1.0  ;
 int cnt = 0 ;
 volatile int newDataIMU = FALSE, newDataGPS = FALSE ; /* Volatile Interrupt Variables */
 
-/* FLIGHT VARIABLES */
-int flightMode[NumberOfModes] =  {CHARGE, TAKEOFF, HOVER,  LAND,  CHARGE} ;
-struct xyz flightCoors[NumberOfModes] ;// Number of Modes must match length of flightMode array ^
-//flightCoors[0].x  = 0.0 ;// = {0.0, 0.0, 0.0} ; // CHARGE
-//flightCoors[0].y  = 0.0 ;
-//flightCoors[0].z  = 0.0 ;
-//flightCoors[1].x  = 0.0 ;//{0.0, 0.0, HOVERALTITUDE}; // TAKEOFF (DEFINE HOVER ALTITUDE ABOVE)
-//flightCoors[1].y  = 0.0 ;
-//flightCoors[1].z  = HOVERALTITUDE ;
-//flightCoors[2].x  = 0.0 ;// {0.0, 0.0, HOVERALTITUDE}; // HOVER 
-//flightCoors[2].y  = 0.0 ;
-//flightCoors[2].z  = HOVERALTITUDE ;
-//flightCoors[3].x  = 0.0 ;//{0.0, 0.0, 0.0 } ; // LAND
-//flightCoors[3].y  = 0.0 ;
-//flightCoors[3].z  = 0.0 ;
-//flightCoors[4].x  = 0.0 ; //{0.0, 0.0, 0.0 } ; // CHARGE
-//flightCoors[4].y  = 0.0 ;
-//flightCoors[4].z  = 0.0 ;
-int flightModeIndex = 0 ;
-struct xyzf initialPosition, curr_locf ;
-struct xyz curr_loc, XYZ_SP;
-/* END FLIGHT VARIABLES */
+
 
 /* Object Creation */
 XYZ_BNO055 imu ;
@@ -263,15 +196,15 @@ void setup() {
   flightCoors[flightModeIndex].y = initialPosition.y ;
   flightCoors[flightModeIndex].z = initialPosition.z ;
   imu.readYPR(ypr) ;
-  Yaw_Setpoint = ypr[0];
-  InputY = fcontrol.rotateAxes(Yaw_Setpoint, Yaw_Setpoint);
+  Yaw_Setpoint = ypr[0] ;
+  InputY = fcontrol.rotateAxes(Yaw_Setpoint, Yaw_Setpoint) ;
   flightModeIndex++; // NEXT FLIGHT MODE (Take Off)
   flightCoors[flightModeIndex].x= initialPosition.x ;
   flightCoors[flightModeIndex].y = initialPosition.y ;
-  flightCoors[flightModeIndex].z = flightCoors[flightModeIndex].z; // Set target altitude
+  flightCoors[flightModeIndex].z = flightCoors[flightModeIndex].z ; // Set target altitude
   flightCoors[flightModeIndex+1].x = initialPosition.x ;
   flightCoors[flightModeIndex+1].y = initialPosition.y ;
-  flightCoors[flightModeIndex+1].z = flightCoors[flightModeIndex].z; // Set target altitude
+  flightCoors[flightModeIndex+1].z = flightCoors[flightModeIndex].z ; // Set target altitude
   flightCoors[flightModeIndex+2].x = initialPosition.x ;
   flightCoors[flightModeIndex+2].y = initialPosition.y ;
   flightCoors[flightModeIndex+2].z = initialPosition.z ; // Set landing altitude
@@ -296,7 +229,14 @@ void setup() {
 void loop() {
   struct xyz ip ;
   double yawT ;
-  
+  if (flightMode[flightModeIndex] == CHARGE ){
+    IMUUpdate.end();
+    TenHzTask.end();
+    //charge(); *******************************************************
+    IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
+    TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ; 
+    flightModeIndex = 1 ;
+  }
   // 10 HZ GPS TASK
   if (newDataGPS == TRUE ) // if GPS Interrupt has fired
   {
@@ -324,7 +264,7 @@ void loop() {
     PID_N.Compute() ;
     PID_E.Compute() ;
     PID_Z.Compute() ;
-    Roll_Setpoint = SpeedControl*OutputE ;
+    Roll_Setpoint = SpeedControl*OutputE ; // SpeedControl and ZControl allow for user changes to angles and thrust in real time 
     Pitch_Setpoint = SpeedControl*OutputN ;
     basePWM = basePWM+ZControl*OutputZ ;
     newDataGPS = FALSE ;
@@ -553,6 +493,19 @@ void getBT( void ) {
     } 
 }
 /* END GET COMMANDS FUNCTION */
+
+/* Charge() function
+ * Waits for signal from charging station that charge has completed
+*/
+//void charge( void ) {
+//    while ((char)CSBT.read() != 'd'){
+//        BT.println("charging...") ;
+//        CSBT.flush();
+//        delay(1000);
+//    }
+//}
+
+
 
 /* Print Values for Debugging */
 void printDebug ( void ) {

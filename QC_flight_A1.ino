@@ -40,6 +40,7 @@
 #define PID_MAX_ANGLE 15 // Maximum Angle Roll and Pitch will be commanded
 #define bitRes 65535 // PWM Bit Resolution
 #define LEDPIN 13
+#define NOISEPIN 15
 #define displayPeriod 3 // seconds per debugging display print
 #define deltaKP .01
 #define deltaKI .0001
@@ -48,6 +49,7 @@
 #define deltaSP 0.5
 #define deg2rad 0.0174533
 #define magneticDec 14.79 // Degrees
+
 
 
 double OutputE, OutputN, OutputZ ;
@@ -83,6 +85,7 @@ IntervalTimer TenHzTask ;
 
 /* BEGIN SETUP */
 void setup() {
+  digitalWrite(NOISEPIN, LOW);
   char go ;
   pinMode(LEDPIN, OUTPUT) ;
   /* Setup The BNO055, Serial, and I2C ports */
@@ -178,7 +181,10 @@ void setup() {
   /************************************************************************** */
   /* ONCE TONE HAS SOUNDED GPS FIX ACQUIRED*/
   go = 'n' ;
-  BT.println("GPS FIX ACQUIRED. 'g' to begin flight sequence");
+  
+  digitalWrite(NOISEPIN, HIGH); // WHISTLE WILL START MAKING NOISE
+  
+  BT.println("GPS FIX ACQUIRED. 'g' to begin calculate, print, and verify flight sequence");
   while(true) {
     if(BT.available()) {
         go = (char)BT.read() ;
@@ -189,8 +195,9 @@ void setup() {
     
     delay(1000);
   } 
-  /* SETUP THE INITIAL STATE */
-  //initialPosition = getGPSData() ; 
+  go = 'n' ;
+  /* SETUP THE INITIAL STATE and FLIGHT PLAN  */
+  //initialPosition = getGPSData() ; // GETS CURRENT GPS COORDS, SETS AS INITIAL POSITION
   /**********************************/
   flightCoors[flightModeIndex].x = initialPosition.x ;
   flightCoors[flightModeIndex].y = initialPosition.y ;
@@ -201,22 +208,36 @@ void setup() {
   flightModeIndex++; // NEXT FLIGHT MODE (Take Off)
   flightCoors[flightModeIndex].x= initialPosition.x ;
   flightCoors[flightModeIndex].y = initialPosition.y ;
-  flightCoors[flightModeIndex].z = flightCoors[flightModeIndex].z ; // Set target altitude
+  flightCoors[flightModeIndex].z =  initialPosition.z + HOVERALTITUDE; // Set target altitude, TAKEOFF (1.5 METERS)
   flightCoors[flightModeIndex+1].x = initialPosition.x ;
   flightCoors[flightModeIndex+1].y = initialPosition.y ;
-  flightCoors[flightModeIndex+1].z = flightCoors[flightModeIndex].z ; // Set target altitude
+  flightCoors[flightModeIndex+1].z = initialPosition.z + HOVERALTITUDE; //  Set target altitude, HOVER (1.5 METERS)
   flightCoors[flightModeIndex+2].x = initialPosition.x ;
   flightCoors[flightModeIndex+2].y = initialPosition.y ;
-  flightCoors[flightModeIndex+2].z = initialPosition.z ; // Set landing altitude
+  flightCoors[flightModeIndex+2].z = initialPosition.z ; // Set landing altitude, LAND
   flightCoors[flightModeIndex+3].x = initialPosition.x ;
   flightCoors[flightModeIndex+3].y = initialPosition.y ;
-  flightCoors[flightModeIndex+3].z = initialPosition.z ; // Set landing altitude
-  /* INITIAL STATE SET, READY TO FLY */
-  
+  flightCoors[flightModeIndex+3].z = initialPosition.z ; // Set landing altitude, CHARGE
+  /* INITIAL STATE and FLIGHT PLAN SET, READY TO FLY */
+  printFlightPlan();
+  BT.println("'g' if acceptable and you want to begin 'flight' attempt";)
+  while(true) {
+    if(BT.available()) {
+        go = (char)BT.read() ;
+        if (go == 'g')
+          break ;
+    }  
+    BT.println("waiting for 'g' take TAKEOFF...");
+    
+    delay(1000);
+  } 
+  digitalWrite(NOISEPIN, LOW); // WHISTLE WILL STOP MAKING NOISE
   for (int i = 0; i <= 10 ; i++) {
     BT.print("T minus ");BT.print(10-i);BT.print(" seconds\n");
+    if(i < 5 ) digitalWrite(NOISEPIN,HIGH);
     if(i != 0) delay(1000) ;
   }
+  digitalWrite(NOISEPIN,LOW);
   BT.println("Liftoff, Hopefully...\n");delay(1000);
   
   IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
@@ -229,10 +250,22 @@ void setup() {
 void loop() {
   struct xyz ip ;
   double yawT ;
+  char go ;
   if (flightMode[flightModeIndex] == CHARGE ){
     IMUUpdate.end();
     TenHzTask.end();
+    motorControl.stopAll();
     //charge(); *******************************************************
+    while(true) {
+        if(BT.available()) {
+            go = (char)BT.read() ;
+            if (go == 'g')
+                break ;
+    }  
+    BT.println("TURN OFF THE THING, IT'S ALL OVER");
+    
+    delay(1000);
+  } 
     IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
     TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ; 
     flightModeIndex = 1 ;
@@ -255,7 +288,7 @@ void loop() {
     ip.y = initialPosition.y ;
     ip.z = initialPosition.z ;
     XYZ_SP = fcontrol.computeXYZSetpoints(flightCoors[flightModeIndex],curr_loc, flightMode[flightModeIndex], yawT, ip); // ******** NEED TO HAVE MAGNETIC DECLINATION? IS IT ADDING OR SUBTRACTING? WE HAVE "POSITIVE" DECLINATION IN CHENEY
-    PID_Z.SetTunings(KpZ, KiZ, KdZ) ;  //  Takes in fdest, curr_loc vectors relative to antenna
+    PID_Z.SetTunings(KpZ, KiZ, KdZ) ;  
     PID_N.SetTunings(KpN, KiN, KdN) ;
     PID_E.SetTunings(KpE, KiE, KdE) ;
     N_Setpoint = XYZ_SP.x ;
@@ -514,38 +547,71 @@ void printDebug ( void ) {
     BT.println("------------------------------------------");
     switch (flightMode[flightModeIndex]) {
         case CHARGE :
-            BT.print("MODE = CHARGE\n");
+            BT.println("MODE = CHARGE\n");
             break ;
         case TAKEOFF :
-            BT.print("MODE = TAKEOFF\n");
+            BT.println("MODE = TAKEOFF!!!!\n");
             break ;
         case HOVER :
-            BT.print("MODE = HOVER\n");
+            BT.println("MODE = HOVER\n");
             break ;
         case TRANSLATE :
-            BT.print("MODE = TRANSLATE\n");
+            BT.println("MODE = TRANSLATE\n");
             break ;
         case LAND :
-            BT.print("MODE = LANDING\n");
+            BT.println("MODE = LANDING (Crashing)\n");
             break ;
     }
+    BT.print("GPS FIX = ");BT.println(curr_locf.f);
     BT.print("DESTINATION > X = ");BT.print(flightCoors[flightModeIndex].x);
     BT.print(" Y = ");BT.print(flightCoors[flightModeIndex].y);BT.print(" Z = ");BT.print(flightCoors[flightModeIndex].z);
     BT.println();
+    BT.print("CURR_LOC > X = ");BT.print(curr_loc.x,3);BT.print(" Y = ");BT.print(curr_loc.y);BT.print(" Z = ");BT.print(curr_loc.z);
     BT.print("CVec XY Leng = ");BT.print(SpeedControl);BT.print("\n");
     BT.print("CVec Z  Leng = ");BT.print(ZControl);BT.print("\n");
     BT.print("Base PWM     = ");BT.print(basePWM);BT.print("%");
     BT.print("\n\n");
-    BT.print("Yaw Actual     = ");BT.print(ypr[0],4);BT.print("  ");BT.print(InputY);BT.println();
-    BT.print("Pitch Actual   = ");BT.print(ypr[1],4);BT.println();
-    BT.print("Roll Actual    = ");BT.print(ypr[2],4);BT.println();BT.println();
-    BT.print("Yaw Setpoint   = ");BT.print(Yaw_Setpoint,4);BT.println();
-    BT.print("Pitch Setpoint = ");BT.print(Pitch_Setpoint,4);BT.println();
-    BT.print("Roll Setpoint  = ");BT.print(Roll_Setpoint,4);BT.println() ;
-    BT.println();
+    BT.print("Z ERROR SIGNAL = ");BT.print(OutputZ,4);BT.print("\n");
+    BT.print("N ERROR SIGNAL = ");BT.print(OutputN,4);BT.print("\n");
+    BT.print("E ERROR SIGNAL = ");BT.print(OutputE,4);BT.print("\n");BT.print("\n");
+    // BT.print("Yaw Actual     = ");BT.print(ypr[0],4);BT.print("  ");BT.print(InputY);BT.println();
+    // BT.print("Pitch Actual   = ");BT.print(ypr[1],4);BT.println();
+    // BT.print("Roll Actual    = ");BT.print(ypr[2],4);BT.println();BT.println();
+    // BT.print("Yaw Setpoint   = ");BT.print(Yaw_Setpoint,4);BT.println();
+    // BT.print("Pitch Setpoint = ");BT.print(Pitch_Setpoint,4);BT.println();
+    // BT.print("Roll Setpoint  = ");BT.print(Roll_Setpoint,4);BT.println() ;
+    // BT.println();
+    
     BT.print("Error Signal\n");BT.print("Pitch =  ");BT.print(pitchOffset,4);BT.println();
     BT.print("Roll =  ");BT.print(rollOffset,4);BT.println();
     BT.print("Yaw  =  ");BT.print(yawOffset,4);BT.println();BT.println();
     cnt = 0;
 }
 /* End print function */
+
+void printFlightPlan(void) {
+    BT.println("<~~ FLIGHT PLAN ~~>");
+    BT.print("CURRENT LOCATION XYZ = ");BT.print(initialPosition.x);BT.print(" ");BT.print(initialPosition.y);BT.print(" ");BT.print(initialPosition.z);BT.print("\n\n"); 
+    for (int i = 0 ; i < NumberOfModes ; i++){
+        BT.print("MODE #");BT.println(i);
+        switch (flightMode[i]) {
+            case CHARGE :
+                BT.println("MODE = CHARGE\n");
+                break ;
+            case TAKEOFF :
+                BT.println("MODE = TAKEOFF!!!!\n");
+                break ;
+            case HOVER :
+                BT.println("MODE = HOVER\n");
+                break ;
+            case TRANSLATE :
+                BT.println("MODE = TRANSLATE\n");
+                break ;
+            case LAND :
+                BT.println("MODE = LANDING (Crashing)\n");
+                break ;
+        }
+        BT.print("DEST MODE XYZ = ");BT.print(flightCoors[i].x);BT.print(" ");BT.print(flightCoors[i].y);BT.print(" ");BT.print(flightCoors[i].z);BT.print("");
+    }
+    BT.println();
+}

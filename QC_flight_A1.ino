@@ -4,15 +4,20 @@
 /* 
  *  THINGS TO RESEARCH:
  *  
- * Magnetic Declination Required?
+ *  > Magnetic Declination Required?
+ *  > 
  * 
  * 
  * 
  * 
  * 
- * 
-*/ //**************************************************************
-
+*/
+/* 
+ *
+ *
+ *
+*/
+ //**************************************************************
 #include <PID_v1.h>
 #include <i2c_t3.h>
 #include <XYZ_BNO055.h>
@@ -28,8 +33,8 @@
 #define BT         Serial
 //#define BT       Serial2
 /* */
-//#define BTCS       Serial3 // Bluetooth with Charging Station **************************
-//#define GPSserial  Serial1 // Rx/Tx with Emlid Reach ****************************
+//#define BTCS       Serial1 // Bluetooth with Charging Station **************************
+#define GPSserial  Serial3 // Rx/Tx with Emlid Reach ****************************
 #define TimeIntervalMilliSeconds 10  // IMU Update Period Milliseconds 100 Hz
 #define TimeInterval10HzTask 100 // GPS UpdatePeriod Milliseconds 10 Hz
 #define ms2us 1000 // us per ms 
@@ -49,6 +54,8 @@
 #define deltaSP 0.5
 #define deg2rad 0.0174533
 #define magneticDec 14.79 // Degrees
+#define DELIM ' '
+#define gpsWeek 1840 // ******* MUST HAVE THIS UPDATED EVERY FLIGHT ATTEMPT ****
 
 
 
@@ -79,14 +86,17 @@ PID PID_Y(&InputY, &OutputY, &Yaw_Setpoint_cons, KpY, KiY, KdY, DIRECT);
 Motors motorControl ;
 FlightControl fcontrol ;
 IntervalTimer IMUUpdate ;
-IntervalTimer TenHzTask ;
+// IntervalTimer TenHzTask ;
 /* End Object Creation */
 
 
 /* BEGIN SETUP */
 void setup() {
+  pinMode(NOISEPIN, OUTPUT) ;
   digitalWrite(NOISEPIN, LOW);
   char go ;
+  static char buffer[256]; // Buffer for GPS data
+  static size_t pos; // Buffer position pointer
   pinMode(LEDPIN, OUTPUT) ;
   /* Setup The BNO055, Serial, and I2C ports */
   Wire.begin(I2C_MASTER, 0x00, I2C_PINS_16_17, I2C_PULLUP_EXT, I2C_RATE_400);
@@ -172,13 +182,35 @@ void setup() {
         if (go == 'g')
           break ;
     }  
-    Serial.println("waiting for 'g'...");
-    
+    BT.println("waiting for 'g'...");
     delay(1000);
   }
-  //FUNCTION TO SEARCH FOR GPS FIX AND SOUND TONE
-  //fcontrol.initFlight() ; 
-  /************************************************************************** */
+  // GET GPS FIX
+  curr_locf.f = 2 ;
+  while (TRUE) {
+      // Reads GPS data as it comes in, stores it to buffer, looks for transmission termination
+    while(GPSserial.available() && pos < sizeof(buffer) - 1) {
+      char c = GPSserial.read();
+      buffer[pos++]=c;
+      if(c=='\n') {
+        buffer[pos]='\0';
+        String out[50];
+        GPSparser(buffer, out);
+        if (out[0].toInt() != gpsWeek ) {}
+        else {
+            initialPosition.x = out[2].toFloat(); // CURRENT EAST LOCATION
+            initialPosition.y = out[3].toFloat(); // CURRENT NORTH LOCATION
+            initialPosition.z = out[4].toFloat(); // CURRENT ALTITUDE
+            curr_locf.f = out[5].toInt() ;
+        }
+        pos=0;
+      }
+    }
+  if (curr_locf.f == 1 || curr_locf.f == 0 || (char)BT.read() == 's')
+    {break ;}
+  BT.println(curr_locf.f);
+  BT.flush();
+  }
   /* ONCE TONE HAS SOUNDED GPS FIX ACQUIRED*/
   go = 'n' ;
   
@@ -220,7 +252,8 @@ void setup() {
   flightCoors[flightModeIndex+3].z = initialPosition.z ; // Set landing altitude, CHARGE
   /* INITIAL STATE and FLIGHT PLAN SET, READY TO FLY */
   printFlightPlan();
-  BT.println("'g' if acceptable and you want to begin 'flight' attempt";)
+  digitalWrite(NOISEPIN, LOW) ;
+  BT.println("'g' if acceptable and you want to begin 'flight' attempt");
   while(true) {
     if(BT.available()) {
         go = (char)BT.read() ;
@@ -231,7 +264,9 @@ void setup() {
     
     delay(1000);
   } 
-  digitalWrite(NOISEPIN, LOW); // WHISTLE WILL STOP MAKING NOISE
+  digitalWrite(NOISEPIN, HIGH); // WHISTLE WILL STOP MAKING NOISE
+  delay(1000) ;
+  digitalWrite(NOISEPIN, LOW) ;
   for (int i = 0; i <= 10 ; i++) {
     BT.print("T minus ");BT.print(10-i);BT.print(" seconds\n");
     if(i < 5 ) digitalWrite(NOISEPIN,HIGH);
@@ -241,19 +276,22 @@ void setup() {
   BT.println("Liftoff, Hopefully...\n");delay(1000);
   
   IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
-  TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ;
+//   TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ;
   
 }
 
 // BEGIN MAIN LOOP 
 // ************************************************************************************************************** //
 void loop() {
-  struct xyz ip ;
-  double yawT ;
+  static char buffer[256]; // Buffer for GPS data
+  static size_t pos; // Buffer position pointer
+  struct xyz ip ; // Initial Position
+  double yawT ; // Transformed yaw
   char go ;
-  if (flightMode[flightModeIndex] == CHARGE ){
+  
+  if (flightMode[flightModeIndex] == CHARGE ){ 
     IMUUpdate.end();
-    TenHzTask.end();
+//    TenHzTask.end();
     motorControl.stopAll();
     //charge(); *******************************************************
     while(true) {
@@ -267,7 +305,7 @@ void loop() {
     delay(1000);
   } 
     IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
-    TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ; 
+    // TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ; 
     flightModeIndex = 1 ;
   }
   // 10 HZ GPS TASK
@@ -275,27 +313,27 @@ void loop() {
   {
     //curr_locf = getGPSData() ; 
     /*****************************/ // NEED THIS FUNCTION
-    curr_loc.x = curr_locf.x ;
-    curr_loc.y = curr_locf.y ;
-    curr_loc.z = curr_locf.z ;
+    curr_loc.x = curr_locf.x ; // EAST
+    curr_loc.y = curr_locf.y ; // NORTH
+    curr_loc.z = curr_locf.z ; // UP
     
     imu.readYPR(ypr) ;
     /*  */
     yawT = ypr[0] + magneticDec ; // ******************************* // Does this need to be here? in ENU, does 'N' mean true north?
     if (yawT > 360.0) { yawT = yawT - 360.0; }
     else if (yawT < 0.0) { yawT = yawT + 360; }
-    ip.x = initialPosition.x ;
-    ip.y = initialPosition.y ;
-    ip.z = initialPosition.z ;
+    ip.x = initialPosition.x ; // EAST
+    ip.y = initialPosition.y ; // NORTH
+    ip.z = initialPosition.z ; // UP
     XYZ_SP = fcontrol.computeXYZSetpoints(flightCoors[flightModeIndex],curr_loc, flightMode[flightModeIndex], yawT, ip); // ******** NEED TO HAVE MAGNETIC DECLINATION? IS IT ADDING OR SUBTRACTING? WE HAVE "POSITIVE" DECLINATION IN CHENEY
     PID_Z.SetTunings(KpZ, KiZ, KdZ) ;  
     PID_N.SetTunings(KpN, KiN, KdN) ;
     PID_E.SetTunings(KpE, KiE, KdE) ;
-    N_Setpoint = XYZ_SP.x ;
-    E_Setpoint = XYZ_SP.y ;
+    N_Setpoint = XYZ_SP.y ; // ****************************** IS THIS CORRECT?
+    E_Setpoint = XYZ_SP.x ;
     Z_Setpoint = XYZ_SP.z ;
-    PID_N.Compute() ;
-    PID_E.Compute() ;
+    PID_N.Compute() ; // N_measured = 0.0
+    PID_E.Compute() ; // E_measured = 0.0
     PID_Z.Compute() ;
     Roll_Setpoint = SpeedControl*OutputE ; // SpeedControl and ZControl allow for user changes to angles and thrust in real time 
     Pitch_Setpoint = SpeedControl*OutputN ;
@@ -330,6 +368,7 @@ void loop() {
     
     newDataIMU = FALSE ;
     cnt++ ;
+  }
       /* Get New Commands */
   if (BT.available()) {
     getBT();
@@ -339,6 +378,28 @@ void loop() {
     /* Print for data/debugging*/
     printDebug();
   }
+  
+  // Reads GPS data as it comes in, stores it to buffer, looks for transmission termination
+  while(GPSserial.available() && pos < sizeof(buffer) - 1) {
+    char c = GPSserial.read();
+    buffer[pos++]=c;
+    if(c=='\n') {
+      buffer[pos]='\0';
+      String out[50];
+      GPSparser(buffer, out);
+    //   for(int i = 1; i <= 4; i++) { // ******************************************** NEED TO DO THIS
+    //     Serial.println(out[i]);
+    //   }
+    //   Serial.println("------------");
+      if (out[0].toInt() != gpsWeek ) {}
+      else {
+          curr_locf.x = out[2].toFloat(); // CURRENT EAST LOCATION
+          curr_locf.y = out[3].toFloat(); // CURRENT NORTH LOCATION
+          curr_locf.z = out[4].toFloat(); // CURRENT ALTITUDE
+          curr_locf.f = out[5].toInt() ;
+      }
+      pos=0;
+    }
   }
 
 }
@@ -351,11 +412,16 @@ void imuISR ( void ) {
 }
 /* End IMU ISR */
 
-/* GPS Read Interrupt Service Routine */
-void TenHzISR ( void ) {
-  newDataGPS = TRUE ;
+// /* GPS Read Interrupt Service Routine */
+// void TenHzISR ( void ) {
+//   newDataGPS = TRUE ;
+// }
+// /* End GPS ISR */
+
+xyz getGPSData ( void ) {
+    
+    
 }
-/* End GPS ISR */
 
 /* IMU Calibration Function, runs for 120 seconds max, LED turns on when done */
 void calibrateIMU() {
@@ -567,7 +633,7 @@ void printDebug ( void ) {
     BT.print(" Y = ");BT.print(flightCoors[flightModeIndex].y);BT.print(" Z = ");BT.print(flightCoors[flightModeIndex].z);
     BT.println();
     BT.print("CURR_LOC > X = ");BT.print(curr_loc.x,3);BT.print(" Y = ");BT.print(curr_loc.y);BT.print(" Z = ");BT.print(curr_loc.z);
-    BT.print("CVec XY Leng = ");BT.print(SpeedControl);BT.print("\n");
+    BT.print("\nCVec XY Leng = ");BT.print(SpeedControl);BT.print("\n");
     BT.print("CVec Z  Leng = ");BT.print(ZControl);BT.print("\n");
     BT.print("Base PWM     = ");BT.print(basePWM);BT.print("%");
     BT.print("\n\n");
@@ -593,7 +659,7 @@ void printFlightPlan(void) {
     BT.println("<~~ FLIGHT PLAN ~~>");
     BT.print("CURRENT LOCATION XYZ = ");BT.print(initialPosition.x);BT.print(" ");BT.print(initialPosition.y);BT.print(" ");BT.print(initialPosition.z);BT.print("\n\n"); 
     for (int i = 0 ; i < NumberOfModes ; i++){
-        BT.print("MODE #");BT.println(i);
+        BT.print("\nMODE #");BT.println(i);
         switch (flightMode[i]) {
             case CHARGE :
                 BT.println("MODE = CHARGE\n");
@@ -611,7 +677,31 @@ void printFlightPlan(void) {
                 BT.println("MODE = LANDING (Crashing)\n");
                 break ;
         }
-        BT.print("DEST MODE XYZ = ");BT.print(flightCoors[i].x);BT.print(" ");BT.print(flightCoors[i].y);BT.print(" ");BT.print(flightCoors[i].z);BT.print("");
+        BT.print("DEST MODE XYZ = ");BT.print(flightCoors[i].x);BT.print(" ");BT.print(flightCoors[i].y);BT.print(" ");BT.print(flightCoors[i].z);BT.print("\n");
     }
     BT.println();
+}
+
+void GPSparser(char *buff, String *out) {
+
+  int pos=0;
+  // parse out required gps info and return
+  String gps_in = String(buff);
+  int index = 0;
+  while(1) {
+    index = gps_in.indexOf(DELIM);
+    String temp = gps_in.substring(0, index);
+    
+    if(++index=='\0')
+      break;
+      
+    gps_in.remove(0,index);
+    
+    //Serial.println(temp);
+    out[pos]=temp;
+
+    pos++;
+
+  }
+  newDataGPS = TRUE ;
 }

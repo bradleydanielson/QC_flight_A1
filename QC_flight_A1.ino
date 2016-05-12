@@ -338,6 +338,7 @@ void loop() {
     N_Setpoint = XYZ_SP.y ; // ****************************** IS THIS CORRECT? YES
     E_Setpoint = XYZ_SP.x ;
     Z_Setpoint = XYZ_SP.z ;
+    InputZ = curr_loc.z ;
     PID_N.Compute() ; // N_measured = 0.0
     PID_E.Compute() ; // E_measured = 0.0
     PID_Z.Compute() ;
@@ -419,7 +420,7 @@ void imuISR ( void ) {
 // }
 // /* End GPS ISR */
 
-xyz getGPSData ( void ) {
+xyz getGPSData ( void ) { // Break it out into a function ?
     
     
 }

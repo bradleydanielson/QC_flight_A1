@@ -1,18 +1,16 @@
 /* FLIGHT CODE FOR QUADDY MCQUADCOPTER (AKA H.M.S. DAN SISSON) */
-// by Brad Danielson
+// by Brad Danielson, Rudy Hulse, Suzanne Reisberg
 // ***************************************************************
 /* 
  *  THINGS TO RESEARCH:
  *  
- *  > Magnetic Declination Required?
+ *  > Magnetic Declination Required? (ENU coors along longitudinal axis?)
  *  > 
+ *  >
  * 
  * 
  * 
  * 
- * 
-*/
-/* 
  *
  *
  *
@@ -55,10 +53,9 @@
 #define deg2rad 0.0174533
 #define magneticDec 14.79 // Degrees
 #define DELIM ' '
-#define gpsWeek 1840 // ******* MUST HAVE THIS UPDATED EVERY FLIGHT ATTEMPT ****
+#define gpsWeek 1840 // ******* MUST HAVE THIS UPDATED EVERY FLIGHT ATTEMPT ****************************************************************
 
-
-
+/* Variables */
 double OutputE, OutputN, OutputZ ;
 double InputE_cons = 0.0, InputN_cons = 0.0, InputZ; /* Zero (constants) due to rotateVector() algorithm */
 double InputP = 0.0, OutputP ;
@@ -72,8 +69,6 @@ double N_Setpoint = 0.0, E_Setpoint = 0.0, Z_Setpoint;
 double SpeedControl = 1.0, ZControl = 1.0  ;
 int cnt = 0 ;
 volatile int newDataIMU = FALSE, newDataGPS = FALSE ; /* Volatile Interrupt Variables */
-
-
 
 /* Object Creation */
 XYZ_BNO055 imu ;
@@ -106,7 +101,7 @@ void setup() {
   //BTCS.begin(115200) ; 
   /* ************************* */
   delay(10) ;
-  //GPSserial.begin(38400) ;
+  GPSserial.begin(38400) ;
   /* *************************************** */
   delay(10) ;
   Serial.begin(115200) ;
@@ -185,8 +180,13 @@ void setup() {
     BT.println("waiting for 'g'...");
     delay(1000);
   }
+  
   // GET GPS FIX
-  curr_locf.f = 2 ;
+  /* 
+   * Waits for a gps FIX before anything can happen or user sends an 's'
+  */
+  curr_locf.f = 2 ; // COMMENT OUT WHEN ACTUALLY TESTING
+  int i ;
   while (TRUE) {
       // Reads GPS data as it comes in, stores it to buffer, looks for transmission termination
     while(GPSserial.available() && pos < sizeof(buffer) - 1) {
@@ -208,11 +208,16 @@ void setup() {
     }
   if (curr_locf.f == 1 || curr_locf.f == 0 || (char)BT.read() == 's')
     {break ;}
-  BT.println(curr_locf.f);
+  if ( i == 10 ){
+    BT.println(curr_locf.f);
+    i = 0 ;
+  }
   BT.flush();
+  i++ ;
   }
   /* ONCE TONE HAS SOUNDED GPS FIX ACQUIRED*/
   go = 'n' ;
+  // END GPS FIX
   
   digitalWrite(NOISEPIN, HIGH); // WHISTLE WILL START MAKING NOISE
   
@@ -228,6 +233,7 @@ void setup() {
     delay(1000);
   } 
   go = 'n' ;
+  
   /* SETUP THE INITIAL STATE and FLIGHT PLAN  */
   //initialPosition = getGPSData() ; // GETS CURRENT GPS COORDS, SETS AS INITIAL POSITION
   /**********************************/
@@ -260,7 +266,7 @@ void setup() {
         if (go == 'g')
           break ;
     }  
-    BT.println("waiting for 'g' take TAKEOFF...");
+    BT.println("waiting for 'g' to TAKEOFF...");
     
     delay(1000);
   } 
@@ -273,7 +279,7 @@ void setup() {
     if(i != 0) delay(1000) ;
   }
   digitalWrite(NOISEPIN,LOW);
-  BT.println("Liftoff, Hopefully...\n");delay(1000);
+  BT.println("...May god have mercy on your soul\n");delay(1000);
   
   IMUUpdate.begin(imuISR, TimeIntervalMilliSeconds * ms2us) ;
 //   TenHzTask.begin(TenHzISR, TimeInterval10HzTask * ms2us) ;
@@ -329,7 +335,7 @@ void loop() {
     PID_Z.SetTunings(KpZ, KiZ, KdZ) ;  
     PID_N.SetTunings(KpN, KiN, KdN) ;
     PID_E.SetTunings(KpE, KiE, KdE) ;
-    N_Setpoint = XYZ_SP.y ; // ****************************** IS THIS CORRECT?
+    N_Setpoint = XYZ_SP.y ; // ****************************** IS THIS CORRECT? YES
     E_Setpoint = XYZ_SP.x ;
     Z_Setpoint = XYZ_SP.z ;
     PID_N.Compute() ; // N_measured = 0.0
@@ -387,10 +393,6 @@ void loop() {
       buffer[pos]='\0';
       String out[50];
       GPSparser(buffer, out);
-    //   for(int i = 1; i <= 4; i++) { // ******************************************** NEED TO DO THIS
-    //     Serial.println(out[i]);
-    //   }
-    //   Serial.println("------------");
       if (out[0].toInt() != gpsWeek ) {}
       else {
           curr_locf.x = out[2].toFloat(); // CURRENT EAST LOCATION
@@ -401,7 +403,6 @@ void loop() {
       pos=0;
     }
   }
-
 }
 //*****************************************************************************************************************//
 // END MAIN LOOP //
@@ -412,7 +413,7 @@ void imuISR ( void ) {
 }
 /* End IMU ISR */
 
-// /* GPS Read Interrupt Service Routine */
+// /* GPS Read Interrupt Service Routine */ CURRENTLY RETIRED FROM SERVICE
 // void TenHzISR ( void ) {
 //   newDataGPS = TRUE ;
 // }
@@ -603,7 +604,6 @@ void getBT( void ) {
 //        delay(1000);
 //    }
 //}
-
 
 
 /* Print Values for Debugging */
